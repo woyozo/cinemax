@@ -2,22 +2,17 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { RefreshCw, Tv, ChevronRight, AlertCircle } from 'lucide-react'
+import { RefreshCw, ChevronRight, AlertCircle } from 'lucide-react'
 import { PlayerMessage } from '@/types'
 import { useCinemaxStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
 
 // ─── Provider Registry ────────────────────────────────────────────────────────
-// Updated June 2026 — verified active providers only
-// vidsrc.xyz / vidsrc.pro removed (same source as vidsrc.me, just TLD rotation)
-// 2embed.cc replaced with autoembed.cc (more stable)
-// embed.su added (good uptime, TMDB native)
-// vidlink.pro added (active, good quality)
 
 export interface Provider {
   id: string
   name: string
-  badge?: string          // optional quality/feature label
+  badge?: string
   getMovieUrl: (tmdbId: number) => string
   getTVUrl: (tmdbId: number, season: number, episode: number) => string
 }
@@ -109,7 +104,7 @@ export function VideoPlayer({
       ? provider.getMovieUrl(tmdbId)
       : provider.getTVUrl(tmdbId, season, episode)
 
-  // Reset state when provider / episode changes
+  // Reset state when provider / episode / media changes
   useEffect(() => {
     setIsLoading(true)
     setHasError(false)
@@ -176,9 +171,7 @@ export function VideoPlayer({
             {p.badge && (
               <span className={cn(
                 'text-[9px] px-1 py-0.5 rounded font-bold',
-                idx === providerIdx
-                  ? 'bg-white/20 text-white'
-                  : 'bg-white/8 text-gray-500'
+                idx === providerIdx ? 'bg-white/20 text-white' : 'bg-white/8 text-gray-500'
               )}>
                 {p.badge}
               </span>
@@ -211,7 +204,7 @@ export function VideoPlayer({
           )}
         </AnimatePresence>
 
-        {/* Error overlay — shown when iframe fails or times out */}
+        {/* Error overlay */}
         <AnimatePresence>
           {hasError && (
             <motion.div
@@ -228,8 +221,6 @@ export function VideoPlayer({
                 </p>
                 <p className="text-gray-500 text-sm">Try a different source</p>
               </div>
-
-              {/* Quick-switch to other providers */}
               <div className="flex flex-wrap gap-2 justify-center max-w-sm">
                 {PROVIDERS.map((p, idx) =>
                   idx !== providerIdx ? (
@@ -243,7 +234,6 @@ export function VideoPlayer({
                   ) : null
                 )}
               </div>
-
               <div className="flex items-center gap-3">
                 <button
                   onClick={tryNextProvider}
@@ -264,7 +254,7 @@ export function VideoPlayer({
           )}
         </AnimatePresence>
 
-        {/* iframe — re-mounts on key change */}
+        {/* iframe — NO sandbox attribute */}
         <iframe
           ref={iframeRef}
           key={`${provider.id}-${tmdbId}-${season}-${episode}`}
@@ -276,9 +266,6 @@ export function VideoPlayer({
           title={mediaTitle || 'Video Player'}
           onLoad={() => setIsLoading(false)}
           onError={() => { setIsLoading(false); setHasError(true) }}
-          // Mobile fullscreen subtitle fix:
-          // allow-same-origin needed for subtitle CORS; allow-scripts for player controls
-          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation allow-pointer-lock"
         />
       </div>
 
