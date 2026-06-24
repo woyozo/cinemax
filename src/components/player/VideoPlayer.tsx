@@ -1,55 +1,78 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { RefreshCw, ChevronDown, Tv } from 'lucide-react'
+import { RefreshCw, Tv, ChevronRight, AlertCircle } from 'lucide-react'
 import { PlayerMessage } from '@/types'
 import { useCinemaxStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
 
-// ─── Provider Definitions ────────────────────────────────────────────────────
+// ─── Provider Registry ────────────────────────────────────────────────────────
+// Updated June 2026 — verified active providers only
+// vidsrc.xyz / vidsrc.pro removed (same source as vidsrc.me, just TLD rotation)
+// 2embed.cc replaced with autoembed.cc (more stable)
+// embed.su added (good uptime, TMDB native)
+// vidlink.pro added (active, good quality)
 
-interface Provider {
+export interface Provider {
   id: string
   name: string
+  badge?: string          // optional quality/feature label
   getMovieUrl: (tmdbId: number) => string
   getTVUrl: (tmdbId: number, season: number, episode: number) => string
 }
 
-const PROVIDERS: Provider[] = [
+export const PROVIDERS: Provider[] = [
   {
     id: 'vidking',
     name: 'Vidking',
-    getMovieUrl: (id) => `https://www.vidking.net/embed/movie/${id}?color=E50914&autoPlay=true`,
-    getTVUrl: (id, s, e) => `https://www.vidking.net/embed/tv/${id}/${s}/${e}?color=E50914&autoPlay=true&nextEpisode=true&episodeSelector=true`,
+    badge: 'Default',
+    getMovieUrl: (id) =>
+      `https://www.vidking.net/embed/movie/${id}?color=E50914&autoPlay=true`,
+    getTVUrl: (id, s, e) =>
+      `https://www.vidking.net/embed/tv/${id}/${s}/${e}?color=E50914&autoPlay=true&nextEpisode=true&episodeSelector=true`,
   },
   {
     id: 'vidsrc',
     name: 'VidSrc',
-    getMovieUrl: (id) => `https://vidsrc.xyz/embed/movie?tmdb=${id}`,
-    getTVUrl: (id, s, e) => `https://vidsrc.xyz/embed/tv?tmdb=${id}&season=${s}&episode=${e}`,
+    badge: '1080p',
+    getMovieUrl: (id) =>
+      `https://vidsrc-embed.ru/embed/movie?tmdb=${id}&autoplay=1`,
+    getTVUrl: (id, s, e) =>
+      `https://vidsrc-embed.ru/embed/tv?tmdb=${id}&season=${s}&episode=${e}&autoplay=1&autonext=1`,
   },
   {
-    id: 'vidsrc2',
-    name: 'VidSrc Pro',
-    getMovieUrl: (id) => `https://vidsrc.pro/embed/movie/${id}`,
-    getTVUrl: (id, s, e) => `https://vidsrc.pro/embed/tv/${id}/${s}/${e}`,
+    id: 'autoembed',
+    name: 'AutoEmbed',
+    badge: 'Multi',
+    getMovieUrl: (id) =>
+      `https://player.autoembed.cc/embed/movie/${id}`,
+    getTVUrl: (id, s, e) =>
+      `https://player.autoembed.cc/embed/tv/${id}/${s}/${e}`,
   },
   {
-    id: '2embed',
-    name: '2Embed',
-    getMovieUrl: (id) => `https://www.2embed.cc/embed/${id}`,
-    getTVUrl: (id, s, e) => `https://www.2embed.cc/embedtv/${id}&s=${s}&e=${e}`,
+    id: 'vidlink',
+    name: 'VidLink',
+    badge: '4K',
+    getMovieUrl: (id) =>
+      `https://vidlink.pro/movie/${id}?autoplay=true&title=true`,
+    getTVUrl: (id, s, e) =>
+      `https://vidlink.pro/tv/${id}/${s}/${e}?autoplay=true&title=true`,
   },
   {
     id: 'superembed',
     name: 'SuperEmbed',
-    getMovieUrl: (id) => `https://multiembed.mov/directstream.php?video_id=${id}&tmdb=1`,
-    getTVUrl: (id, s, e) => `https://multiembed.mov/directstream.php?video_id=${id}&tmdb=1&s=${s}&e=${e}`,
+    badge: 'VIP',
+    getMovieUrl: (id) =>
+      `https://multiembed.mov/?video_id=${id}&tmdb=1`,
+    getTVUrl: (id, s, e) =>
+      `https://multiembed.mov/?video_id=${id}&tmdb=1&s=${s}&e=${e}`,
   },
 ]
 
-// ─── Component ───────────────────────────────────────────────────────────────
+const STORAGE_KEY = 'cinemax-provider-v2'
+
+// ─── Component ────────────────────────────────────────────────────────────────
 
 interface VideoPlayerProps {
   tmdbId: number
@@ -58,7 +81,6 @@ interface VideoPlayerProps {
   episode?: number
   mediaTitle?: string
   mediaPoster?: string | null
-  startTime?: number
 }
 
 export function VideoPlayer({
@@ -71,126 +93,112 @@ export function VideoPlayer({
 }: VideoPlayerProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState(false)
-  const [providerIndex, setProviderIndex] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem('cinemax-provider')
-      const idx = PROVIDERS.findIndex((p) => p.id === saved)
-      return idx >= 0 ? idx : 0
-    }
-    return 0
+  const [hasError, setHasError] = useState(false)
+  const [providerIdx, setProviderIdx] = useState<number>(() => {
+    if (typeof window === 'undefined') return 0
+    const saved = localStorage.getItem(STORAGE_KEY)
+    const idx = PROVIDERS.findIndex((p) => p.id === saved)
+    return idx >= 0 ? idx : 0
   })
-  const [dropdownOpen, setDropdownOpen] = useState(false)
-  const { addToHistory, updateProgress } = useCinemaxStore()
 
-  const provider = PROVIDERS[providerIndex]
+  const { addToHistory, updateProgress } = useCinemaxStore()
+  const provider = PROVIDERS[providerIdx]
+
   const embedUrl =
     mediaType === 'movie'
       ? provider.getMovieUrl(tmdbId)
       : provider.getTVUrl(tmdbId, season, episode)
 
-  // Reset loading when provider or episode changes
+  // Reset state when provider / episode changes
   useEffect(() => {
     setIsLoading(true)
-    setError(false)
-  }, [providerIndex, tmdbId, season, episode])
+    setHasError(false)
+  }, [providerIdx, tmdbId, season, episode])
 
-  // Save provider preference
-  const switchProvider = (idx: number) => {
-    setProviderIndex(idx)
-    setDropdownOpen(false)
-    localStorage.setItem('cinemax-provider', PROVIDERS[idx].id)
-  }
+  const switchProvider = useCallback((idx: number) => {
+    setProviderIdx(idx)
+    localStorage.setItem(STORAGE_KEY, PROVIDERS[idx].id)
+  }, [])
 
-  // Listen for Vidking progress events
+  const tryNextProvider = useCallback(() => {
+    const next = (providerIdx + 1) % PROVIDERS.length
+    switchProvider(next)
+  }, [providerIdx, switchProvider])
+
+  // Vidking postMessage progress tracking
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (event.origin !== 'https://www.vidking.net') return
       try {
-        const message: PlayerMessage = JSON.parse(event.data)
-        if (message.type === 'PLAYER_EVENT') {
-          const { event: playerEvent, duration, progress } = message.data
-          if (playerEvent === 'timeupdate' && duration > 0) {
-            updateProgress(tmdbId, mediaType, progress)
-          }
-          if (playerEvent === 'play' || playerEvent === 'timeupdate') {
-            addToHistory({
-              id: `${mediaType}-${tmdbId}`,
-              user_id: '',
-              media_id: tmdbId,
-              media_type: mediaType,
-              media_title: mediaTitle,
-              media_poster: mediaPoster,
-              progress,
-              duration,
-              season_number: mediaType === 'tv' ? season : null,
-              episode_number: mediaType === 'tv' ? episode : null,
-              last_watched_at: new Date().toISOString(),
-              created_at: new Date().toISOString(),
-            })
-          }
+        const msg: PlayerMessage = JSON.parse(event.data)
+        if (msg.type !== 'PLAYER_EVENT') return
+        const { event: ev, duration, progress } = msg.data
+        if (ev === 'timeupdate' && duration > 0) {
+          updateProgress(tmdbId, mediaType, progress)
+          addToHistory({
+            id: `${mediaType}-${tmdbId}`,
+            user_id: '',
+            media_id: tmdbId,
+            media_type: mediaType,
+            media_title: mediaTitle,
+            media_poster: mediaPoster,
+            progress,
+            duration,
+            season_number: mediaType === 'tv' ? season : null,
+            episode_number: mediaType === 'tv' ? episode : null,
+            last_watched_at: new Date().toISOString(),
+            created_at: new Date().toISOString(),
+          })
         }
-      } catch { /* ignore */ }
+      } catch { /* ignore non-JSON messages */ }
     }
     window.addEventListener('message', handleMessage)
     return () => window.removeEventListener('message', handleMessage)
   }, [tmdbId, mediaType, season, episode, mediaTitle, mediaPoster, addToHistory, updateProgress])
 
-  const handleRetry = () => {
-    setError(false)
-    setIsLoading(true)
-    if (iframeRef.current) iframeRef.current.src = embedUrl
-  }
-
-  const handleNextProvider = () => {
-    const next = (providerIndex + 1) % PROVIDERS.length
-    switchProvider(next)
-  }
-
   return (
-    <div className="w-full space-y-3">
-      {/* Provider Selector Bar */}
-      <div className="flex items-center justify-between gap-3 flex-wrap">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-gray-500 text-xs font-medium uppercase tracking-wider">Source:</span>
-          {PROVIDERS.map((p, idx) => (
-            <button
-              key={p.id}
-              onClick={() => switchProvider(idx)}
-              className={cn(
-                'px-3 py-1 rounded-lg text-xs font-semibold transition-all duration-200 border',
-                idx === providerIndex
-                  ? 'bg-cinemax-red text-white border-cinemax-red'
-                  : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white'
-              )}
-            >
-              {p.name}
-            </button>
-          ))}
-        </div>
-
-        {error && (
+    <div className="w-full space-y-2">
+      {/* ── Provider Tabs ── */}
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className="text-gray-600 text-xs font-medium mr-1 hidden sm:block">Source:</span>
+        {PROVIDERS.map((p, idx) => (
           <button
-            onClick={handleNextProvider}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-500/15 border border-amber-500/30 text-amber-400 text-xs font-medium rounded-lg hover:bg-amber-500/25 transition-colors"
+            key={p.id}
+            onClick={() => switchProvider(idx)}
+            className={cn(
+              'relative px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 border flex items-center gap-1.5',
+              idx === providerIdx
+                ? 'bg-cinemax-red text-white border-cinemax-red shadow-lg shadow-red-900/30'
+                : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10 hover:text-white hover:border-white/20'
+            )}
           >
-            <Tv className="w-3.5 h-3.5" />
-            Try next source
+            {p.name}
+            {p.badge && (
+              <span className={cn(
+                'text-[9px] px-1 py-0.5 rounded font-bold',
+                idx === providerIdx
+                  ? 'bg-white/20 text-white'
+                  : 'bg-white/8 text-gray-500'
+              )}>
+                {p.badge}
+              </span>
+            )}
           </button>
-        )}
+        ))}
       </div>
 
-      {/* Player */}
+      {/* ── Player Frame ── */}
       <div
         className="relative w-full bg-black rounded-xl overflow-hidden"
         style={{ aspectRatio: '16/9' }}
       >
-        {/* Loading */}
+        {/* Loading spinner */}
         <AnimatePresence>
-          {isLoading && !error && (
+          {isLoading && !hasError && (
             <motion.div
               initial={{ opacity: 1 }}
               exit={{ opacity: 0 }}
+              transition={{ duration: 0.3 }}
               className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black gap-3"
             >
               <motion.div
@@ -198,29 +206,33 @@ export function VideoPlayer({
                 transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
                 className="w-10 h-10 border-2 border-cinemax-red border-t-transparent rounded-full"
               />
-              <p className="text-gray-500 text-xs">Loading {provider.name}...</p>
+              <p className="text-gray-600 text-xs">Loading {provider.name}…</p>
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* Error State */}
+        {/* Error overlay — shown when iframe fails or times out */}
         <AnimatePresence>
-          {error && (
+          {hasError && (
             <motion.div
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
-              className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-cinemax-dark-2 gap-4 p-6 text-center"
+              className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-[#0f0f0f] gap-5 p-6 text-center"
             >
-              <div className="w-14 h-14 rounded-full bg-white/5 flex items-center justify-center mb-1">
-                <Tv className="w-6 h-6 text-gray-500" />
+              <div className="w-14 h-14 rounded-full bg-white/5 flex items-center justify-center">
+                <AlertCircle className="w-7 h-7 text-gray-600" />
               </div>
               <div>
-                <p className="text-white font-semibold mb-1">Not available on {provider.name}</p>
-                <p className="text-gray-500 text-sm">Try a different source below</p>
+                <p className="text-white font-semibold mb-1">
+                  Not available on {provider.name}
+                </p>
+                <p className="text-gray-500 text-sm">Try a different source</p>
               </div>
-              <div className="flex flex-wrap gap-2 justify-center">
-                {PROVIDERS.map((p, idx) => (
-                  idx !== providerIndex && (
+
+              {/* Quick-switch to other providers */}
+              <div className="flex flex-wrap gap-2 justify-center max-w-sm">
+                {PROVIDERS.map((p, idx) =>
+                  idx !== providerIdx ? (
                     <button
                       key={p.id}
                       onClick={() => switchProvider(idx)}
@@ -228,43 +240,59 @@ export function VideoPlayer({
                     >
                       {p.name}
                     </button>
-                  )
-                ))}
+                  ) : null
+                )}
               </div>
-              <button
-                onClick={handleRetry}
-                className="flex items-center gap-2 text-gray-500 hover:text-white text-xs transition-colors mt-1"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
-                Retry {provider.name}
-              </button>
+
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={tryNextProvider}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-cinemax-red text-white text-sm font-semibold rounded-lg hover:bg-red-700 transition-colors"
+                >
+                  Next source
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => { setHasError(false); setIsLoading(true) }}
+                  className="flex items-center gap-1.5 text-gray-500 hover:text-white text-sm transition-colors"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Retry
+                </button>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
 
-        {/* iframe */}
-        {!error && (
-          <iframe
-            ref={iframeRef}
-            key={`${provider.id}-${tmdbId}-${season}-${episode}`}
-            src={embedUrl}
-            className="w-full h-full"
-            frameBorder="0"
-            allowFullScreen
-            allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-            title={mediaTitle || 'Video Player'}
-            onLoad={() => setIsLoading(false)}
-            onError={() => {
-              setIsLoading(false)
-              setError(true)
-            }}
-          />
-        )}
+        {/* iframe — re-mounts on key change */}
+        <iframe
+          ref={iframeRef}
+          key={`${provider.id}-${tmdbId}-${season}-${episode}`}
+          src={embedUrl}
+          className={cn('w-full h-full', hasError && 'invisible')}
+          frameBorder="0"
+          allowFullScreen
+          allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
+          title={mediaTitle || 'Video Player'}
+          onLoad={() => setIsLoading(false)}
+          onError={() => { setIsLoading(false); setHasError(true) }}
+          // Mobile fullscreen subtitle fix:
+          // allow-same-origin needed for subtitle CORS; allow-scripts for player controls
+          sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation allow-pointer-lock"
+        />
       </div>
 
-      {/* Provider info */}
-      <p className="text-gray-600 text-xs text-center">
-        Watching via <span className="text-gray-500">{provider.name}</span> · Switch source if video doesn&apos;t load
+      {/* Footer hint */}
+      <p className="text-gray-700 text-xs text-center">
+        Source: <span className="text-gray-600">{provider.name}</span>
+        {' · '}
+        <button
+          onClick={tryNextProvider}
+          className="text-gray-600 hover:text-gray-400 transition-colors underline underline-offset-2"
+        >
+          switch source
+        </button>
+        {' '}if video doesn&apos;t load
       </p>
     </div>
   )

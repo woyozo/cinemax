@@ -39,12 +39,17 @@ export function HeroBanner({ items, mediaType = 'movie' }: HeroBannerProps) {
 
   const type = mediaType
   const title = isMovie(item) ? item.title : (item as TVShow).name
-  const date = isMovie(item) ? item.release_date : (item as TVShow).first_air_date
+  const date  = isMovie(item) ? item.release_date : (item as TVShow).first_air_date
+
+  // FIX: correct route paths for detail and watch
+  const detailHref = type === 'movie' ? `/movies/${item.id}` : `/tv-shows/${item.id}`
+  const watchHref  = type === 'movie' ? `/watch/movie/${item.id}` : `/watch/tv/${item.id}?s=1&e=1`
+
   const backdropUrl = tmdbImageUrl(item.backdrop_path, 'original')
 
   return (
     <div className="relative w-full h-[60vh] sm:h-[70vh] lg:h-[85vh] overflow-hidden">
-      {/* Background Images */}
+      {/* Backdrop images */}
       <AnimatePresence mode="wait">
         <motion.div
           key={current}
@@ -81,7 +86,6 @@ export function HeroBanner({ items, mediaType = 'movie' }: HeroBannerProps) {
               exit={{ opacity: 0, y: -20 }}
               transition={{ duration: 0.5, delay: 0.2 }}
             >
-              {/* Badges */}
               <div className="flex items-center gap-3 mb-3">
                 <span className="px-2.5 py-1 bg-cinemax-red text-white text-xs font-bold rounded-md uppercase tracking-wider">
                   {type === 'movie' ? 'Movie' : 'TV Show'}
@@ -90,32 +94,29 @@ export function HeroBanner({ items, mediaType = 'movie' }: HeroBannerProps) {
                   <Star className="w-4 h-4 fill-yellow-400" />
                   {formatRating(item.vote_average)}
                 </div>
-                {date && (
-                  <span className="text-gray-400 text-sm">{formatYear(date)}</span>
-                )}
+                {date && <span className="text-gray-400 text-sm">{formatYear(date)}</span>}
               </div>
 
-              {/* Title */}
               <h1 className="text-3xl sm:text-4xl lg:text-5xl xl:text-6xl font-black text-white leading-tight mb-4 text-shadow">
                 {title}
               </h1>
 
-              {/* Overview */}
               <p className="text-gray-300 text-sm sm:text-base lg:text-lg leading-relaxed mb-6 max-w-xl text-shadow">
                 {truncateText(item.overview, 200)}
               </p>
 
-              {/* Actions */}
               <div className="flex items-center gap-3 flex-wrap">
+                {/* FIX: correct watch href */}
                 <Link
-                  href={`/watch/${type}/${item.id}`}
+                  href={watchHref}
                   className="flex items-center gap-2 px-6 py-3 bg-white text-black font-bold rounded-lg hover:bg-gray-200 transition-all duration-200 text-sm sm:text-base"
                 >
                   <Play className="w-5 h-5 fill-black" />
                   Play Now
                 </Link>
+                {/* FIX: correct detail href */}
                 <Link
-                  href={`/${type}/${item.id}`}
+                  href={detailHref}
                   className="flex items-center gap-2 px-6 py-3 bg-white/15 backdrop-blur-sm text-white font-semibold rounded-lg hover:bg-white/25 transition-all duration-200 border border-white/20 text-sm sm:text-base"
                 >
                   <Info className="w-5 h-5" />
@@ -130,40 +131,30 @@ export function HeroBanner({ items, mediaType = 'movie' }: HeroBannerProps) {
         </div>
       </div>
 
-      {/* Slide Indicators */}
+      {/* Dot indicators */}
       <div className="absolute bottom-6 right-6 sm:right-8 lg:right-16 flex items-center gap-2">
         {featured.map((_, idx) => (
           <button
             key={idx}
-            onClick={() => {
-              setCurrent(idx)
-              setIsAutoPlaying(false)
-            }}
+            onClick={() => { setCurrent(idx); setIsAutoPlaying(false) }}
             className={`transition-all duration-300 rounded-full ${
               idx === current
                 ? 'w-8 h-2 bg-cinemax-red'
                 : 'w-2 h-2 bg-white/30 hover:bg-white/60'
             }`}
-            aria-label={`Go to slide ${idx + 1}`}
           />
         ))}
       </div>
 
-      {/* Nav Arrows */}
+      {/* Arrow nav */}
       <button
-        onClick={() => {
-          setCurrent((prev) => (prev - 1 + featured.length) % featured.length)
-          setIsAutoPlaying(false)
-        }}
+        onClick={() => { setCurrent((p) => (p - 1 + featured.length) % featured.length); setIsAutoPlaying(false) }}
         className="absolute left-4 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center rounded-full bg-black/40 hover:bg-black/70 border border-white/10 transition-colors text-white"
       >
         <ChevronLeft className="w-5 h-5" />
       </button>
       <button
-        onClick={() => {
-          setCurrent((prev) => (prev + 1) % featured.length)
-          setIsAutoPlaying(false)
-        }}
+        onClick={() => { setCurrent((p) => (p + 1) % featured.length); setIsAutoPlaying(false) }}
         className="absolute right-4 top-1/2 -translate-y-1/2 w-10 h-10 flex items-center justify-center rounded-full bg-black/40 hover:bg-black/70 border border-white/10 transition-colors text-white"
       >
         <ChevronRight className="w-5 h-5" />
